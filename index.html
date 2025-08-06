@@ -1,0 +1,189 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My eBird Portfolio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        #map { height: 500px; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <header class="bg-blue-600 text-white py-6">
+        <div class="container mx-auto px-4">
+            <h1 class="text-4xl font-bold">My eBird Portfolio</h1>
+            <p class="mt-2 text-lg">Interactive map of my birding observations by country</p>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <section class="mb-8">
+            <h2 class="text-2xl font-semibold mb-4">My Birding Map</h2>
+            <p class="mb-4">Enter your eBird username and API key to view your bird observations on an interactive map.</p>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <div class="mb-4">
+                    <label for="username" class="block text-sm font-medium text-gray-700">eBird Username</label>
+                    <input type="text" id="username" class="mt-1 p-2 w-full border rounded-md" placeholder="Enter your eBird username" required>
+                </div>
+                <div class="mb-4">
+                    <label for="apiKey" class="block text-sm font-medium text-gray-700">eBird API Key</label>
+                    <input type="text" id="apiKey" class="mt-1 p-2 w-full border rounded-md" placeholder="Enter your API key" required>
+                </div>
+                <button onclick="fetchMyObservations()" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">Load My Observations</button>
+            </div>
+        </section>
+
+        <section id="map" class="mb-8"></section>
+
+        <section id="observations" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Observations list will be populated here -->
+        </section>
+    </main>
+
+    <footer class="bg-gray-800 text-white py-4">
+        <div class="container mx-auto px-4 text-center">
+            <p>Built with the <a href="https://ebird.org" class="underline" target="_blank">eBird API</a> and <a href="https://leafletjs.com" class="underline" target="_blank">Leaflet.js</a>. Get your API key from <a href="https://ebird.org/api/keygen" class="underline" target="_blank">eBird</a>.</p>
+            <p>&copy; 2025 [Your Name]</p>
+        </div>
+    </footer>
+
+    <script>
+        // Initialize Leaflet map
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Country coordinates (simplified, add more as needed)
+        const countryCoords = {
+            'US': [37.0902, -95.7129],
+            'CA': [56.1304, -106.3468],
+            'MX': [23.6345, -102.5528],
+            'GB': [55.3781, -3.4360],
+            'AU': [-25.2744, 133.7751]
+            // Add more country coordinates as needed
+        };
+
+        async function fetchMyObservations() {
+            const username = document.getElementById('username').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const observationsSection = document.getElementById('observations');
+
+            if (!username || !apiKey) {
+                alert('Please fill in both username and API key.');
+                return;
+            }
+
+            const url = `https://api.ebird.org/v2/data/obs/${username}/recent?back=30`;
+            try {
+                const response = await fetch(url, {
+                    headers: { 'x-ebirdapitoken': apiKey }
+                });
+                if (!response.ok) throw new Error('Failed to fetch observations');
+                const data = await response.json();
+
+                observationsSection.innerHTML = '';
+                if (data.length === 0) {
+                    observationsSection.innerHTML = '<p class="text-gray-600">No recent observations found for this user.</p>';
+                    return;
+                }
+
+                // Group observations by country
+                const countryData = {};
+                data.forEach(obs => {
+                    const countryCode = obs.locId.split('-')[0]; // Extract country code from locId
+                    if (!countryData	CountryCode]) {
+                        countryData[countryCode] = { species: new Set(), observations: [] };
+                    }
+                    countryData[countryCode].species.add(obs.comName);
+                    countryData[countryCode].observations.push(obs);
+                });
+
+                // Clear existing markers
+                map.eachLayer(layer => {
+                    if (layer instanceof L.Marker) map.removeLayer(layer);
+                });
+
+                // Add markers for each country
+                Object.keys(countryData).forEach(countryCode => {
+                    if (countryCoords[countryCode]) {
+                        const speciesCount = countryData[countryCode].species.size;
+                        const speciesList = Array.from(countryData[countryCode].species).join(', ');
+                        const marker = L.marker(countryCoords[countryCode])
+                            .addTo(map)
+                            .bindTooltip(`Species in ${countryCode}: ${speciesCount}`, { permanent: false })
+                            .bindPopup(`
+                                <b>${countryCode} Observations</b><br>
+                                <b>Species (${speciesCount}):</b> ${speciesList}
+                            `);
+                    }
+                });
+
+                // Display observations as cards
+                data.forEach(obs => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white p-4 rounded-lg shadow-md';
+                    card.innerHTML = `
+                        <h3 class="text-lg font-semibold">${obs.comName}</h3>
+                        <p><strong>Scientific Name:</strong> ${obs.sciName}</p>
+                        <p><strong>Location:</strong> ${obs.locName}</p>
+                        <p><strong>Date:</strong> ${obs.obsDt}</p>
+                        <p><strong>Count:</strong> ${obs.howMany || 'Not specified'}</p>
+                        <p><strong>Reviewed:</strong> ${obs.obsReviewed ? 'Yes' : 'No'}</p>
+                    `;
+                    observationsSection.appendChild(card);
+                });
+
+                // Adjust map bounds to fit markers
+                const bounds = L.latLngBounds(Object.values(countryCoords));
+                map.fitBounds(bounds);
+            } catch (error) {
+                console.error('Error:', error);
+                observationsSection.innerHTML = '<p class="text-red-600">Error fetching observations. Please check your username and API key.</p>';
+            }
+        }
+    </script>
+</body>
+</html>
